@@ -1,6 +1,6 @@
 {
   "mimeTypes": {
-    ".xml": "application/rss+xml"
+    ".xml": "application/rss+xml; charset=utf-8"
   },
   "routes": [
     {

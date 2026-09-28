@@ -1,0 +1,13 @@
+{
+  "mimeTypes": {
+    ".xml": "application/rss+xml"
+  },
+  "routes": [
+    {
+      "route": "/feed.xml",
+      "headers": {
+        "Cache-Control": "public, max-age=300"
+      }
+    }
+  ]
+}

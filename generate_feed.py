@@ -11,7 +11,7 @@ import re
 import sys
 import tempfile
 from urllib.error import HTTPError
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 import xml.etree.ElementTree as ET
 
@@ -23,6 +23,8 @@ ARTICLE_LIMIT = 2_000_000
 MAX_ITEMS = 30
 TIMEOUT = 12
 NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+MEDIA_NS = "http://search.yahoo.com/mrss/"
+ET.register_namespace("media", MEDIA_NS)
 
 
 class FeedError(Exception):
@@ -46,6 +48,33 @@ def official_url(url, *, article=False):
         return url
     except ValueError as exc:
         raise FeedError("invalid URL") from exc
+
+
+def official_image_url(url):
+    """Keep only a bounded official CMS image URL and request a card-sized variant."""
+    try:
+        if (not url or len(url) > 2048 or re.search(r"[\s\x00-\x1f\x7f]", url)):
+            raise FeedError("invalid image URL")
+        parsed = urlsplit(url)
+        path = parsed.path
+        if (parsed.scheme != "https" or parsed.netloc != "assets.astonmartinf1.com"
+                or parsed.fragment or not path.startswith("/public/cms/")
+                or "//" in path or "%" in path or "\\" in path
+                or any(part in (".", "..") for part in path.split("/"))
+                or not path.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".avif"))):
+            raise FeedError("noncanonical official image URL")
+        pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+        if len(pairs) != len({key for key, _ in pairs}) or any(key not in ("w", "fit") for key, _ in pairs):
+            raise FeedError("unsupported image URL query")
+        params = dict(pairs)
+        width_text = params.get("w", "480")
+        if (not re.fullmatch(r"[1-9][0-9]{0,3}", width_text)
+                or int(width_text) > 3000 or params.get("fit", "fill") != "fill"):
+            raise FeedError("unsupported image transform")
+        width = min(int(width_text), 480)
+        return f"https://assets.astonmartinf1.com{path}?w={width}&fit=fill"
+    except ValueError as exc:
+        raise FeedError("invalid image URL") from exc
 
 
 class CheckedRedirects(HTTPRedirectHandler):
@@ -169,8 +198,15 @@ def extract_article(html, url):
     published = meta.get("datepublished") or " ".join(parser.date_text).strip()
     if not title or not description or not published:
         raise FeedError("article missing title, description or published date: " + url)
+    image_url = None
+    if meta.get("og:image"):
+        try:
+            image_url = official_image_url(meta["og:image"])
+        except FeedError:
+            # Image metadata is optional; never let a bad image hide a valid story.
+            pass
     return {"title": title, "description": description,
-            "pub_date": parse_date(published), "link": url}
+            "pub_date": parse_date(published), "link": url, "image_url": image_url}
 
 
 def build_feed(fetcher=fetch, max_items=20):
@@ -195,6 +231,9 @@ def build_feed(fetcher=fetch, max_items=20):
             elem.text = text
             if name == "guid":
                 elem.set("isPermaLink", "true")
+        if record["image_url"]:
+            ET.SubElement(item, f"{{{MEDIA_NS}}}content",
+                          {"url": record["image_url"], "medium": "image"})
     payload = ET.tostring(rss, encoding="utf-8", xml_declaration=True)
     validate_feed(payload)
     return payload
@@ -216,6 +255,13 @@ def validate_feed(payload):
             if (item.findtext("guid") != link or not item.findtext("title")
                     or not item.findtext("description") or not item.findtext("pubDate")):
                 raise FeedError("incomplete RSS item")
+            images = item.findall(f"{{{MEDIA_NS}}}content")
+            if len(images) > 1:
+                raise FeedError("multiple RSS images")
+            if images:
+                image = images[0]
+                if image.get("medium") != "image" or official_image_url(image.get("url")) != image.get("url"):
+                    raise FeedError("invalid RSS image")
     except ET.ParseError as exc:
         raise FeedError("malformed RSS") from exc
 

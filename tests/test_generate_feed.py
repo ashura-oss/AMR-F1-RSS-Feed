@@ -19,6 +19,8 @@ ARTICLE_NEWER = (FIXTURES / "article_newer.html").read_bytes()
 ARTICLE_OLDER = (FIXTURES / "article_older.html").read_bytes()
 NEWER_URL = feed.ORIGIN + "/en-GB/news/story-newer"
 OLDER_URL = feed.ORIGIN + "/en-GB/news/story-older"
+IMAGE_URL = "https://assets.astonmartinf1.com/public/cms/story/image/photo.jpg?w=480&fit=fill"
+MEDIA_CONTENT = "{http://search.yahoo.com/mrss/}content"
 
 
 class FakeResponse:
@@ -92,10 +94,31 @@ class ArticleTests(unittest.TestCase):
         self.assertEqual(record["title"], "Team announces its latest update & plans")
         self.assertEqual(record["pub_date"].isoformat(), "2026-09-19T00:00:00+00:00")
         self.assertEqual(record["link"], NEWER_URL)
+        self.assertEqual(record["image_url"], IMAGE_URL)
 
     def test_accepts_itemprop_time_element(self):
         record = feed.extract_article(ARTICLE_OLDER, OLDER_URL)
         self.assertEqual(record["pub_date"].isoformat(), "2026-09-20T00:00:00+00:00")
+        self.assertIsNone(record["image_url"])
+
+    def test_image_url_rejects_foreign_unsafe_and_unexpected_source_urls(self):
+        bad = (
+            "http://assets.astonmartinf1.com/public/cms/x/y/photo.jpg?w=1500&fit=fill",
+            "https://assets.astonmartinf1.com.evil/public/cms/x/y/photo.jpg?w=1500&fit=fill",
+            "https://assets.astonmartinf1.com@evil.example/public/cms/x/y/photo.jpg?w=1500&fit=fill",
+            "https://assets.astonmartinf1.com/public/cms/../secret.jpg?w=1500&fit=fill",
+            "https://assets.astonmartinf1.com/public/cms/x/y/photo.svg?w=1500&fit=fill",
+            "https://assets.astonmartinf1.com/public/cms/x/y/photo.jpg?w=999999&fit=fill",
+            "https://assets.astonmartinf1.com/public/cms/x/y/photo.jpg?w=1500&fit=fill&url=https://evil.example",
+            "https://assets.astonmartinf1.com/public/cms/x/y/photo.jpg?w=1500&fit=fill#fragment",
+        )
+        for url in bad:
+            with self.subTest(url=url):
+                with self.assertRaises(feed.FeedError):
+                    feed.official_image_url(url)
+                html = ARTICLE_OLDER.replace(b"</head>",
+                                             ('<meta property="og:image" content="' + url.replace('&', '&amp;') + '"></head>').encode())
+                self.assertIsNone(feed.extract_article(html, OLDER_URL)["image_url"])
 
     def test_rejects_missing_metadata_invalid_date_origin_and_oversize(self):
         cases = (
@@ -150,6 +173,18 @@ class FeedTests(unittest.TestCase):
         self.assertEqual([item.findtext("guid") for item in items],
                          [OLDER_URL, NEWER_URL])
         self.assertTrue(all(item.find("guid").get("isPermaLink") == "true" for item in items))
+        self.assertIsNone(items[0].find(MEDIA_CONTENT))
+        self.assertEqual(items[1].find(MEDIA_CONTENT).get("url"), IMAGE_URL)
+        self.assertEqual(items[1].find(MEDIA_CONTENT).get("medium"), "image")
+        self.assertIn(b"xmlns:media=\"http://search.yahoo.com/mrss/\"", payload)
+
+    def test_feed_validation_rejects_unofficial_image(self):
+        payload = feed.build_feed(fetcher=fixture_fetcher)
+        root = ET.fromstring(payload)
+        media = root.find("channel").findall("item")[1].find(MEDIA_CONTENT)
+        media.set("url", "https://attacker.example/photo.jpg")
+        with self.assertRaises(feed.FeedError):
+            feed.validate_feed(ET.tostring(root, encoding="utf-8"))
 
     def test_url_guid_deduplication_and_payload_are_stable(self):
         first = feed.build_feed(fetcher=fixture_fetcher)

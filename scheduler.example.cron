@@ -1,0 +1,4 @@
+# EXAMPLE ONLY — not installed or deployed. Replace paths for your future host.
+# Host must serve /srv/amr-f1-rss/feed.xml over HTTPS with application/rss+xml.
+# Daily at 06:15 host-local time; monitor /srv/amr-f1-rss/generator.log and exit status.
+15 6 * * * cd /srv/amr-f1-rss && /usr/bin/python3 generate_feed.py >> /srv/amr-f1-rss/generator.log 2>&1

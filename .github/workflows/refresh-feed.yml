@@ -1,0 +1,76 @@
+name: Refresh official news RSS
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: amr-rss-production-feed
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out feed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Test and generate feed
+        run: |
+          python3 --version
+          python3 -m unittest discover -s tests
+          python3 generate_feed.py
+
+      - name: Compare with production
+        id: compare
+        run: |
+          if curl --fail --silent --show-error --max-time 15 \
+              "https://green-sky-08b27ad10.4.azurestaticapps.net/feed.xml?run=${GITHUB_RUN_ID}" \
+              -o "${RUNNER_TEMP}/live-feed.xml" \
+              && cmp -s feed.xml "${RUNNER_TEMP}/live-feed.xml"; then
+            echo 'deploy=false' >> "${GITHUB_OUTPUT}"
+            echo 'Production feed is current.'
+          else
+            echo 'deploy=true' >> "${GITHUB_OUTPUT}"
+            echo 'Production feed needs an update.'
+          fi
+
+      - name: Stage only public files
+        if: steps.compare.outputs.deploy == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          mkdir site
+          cp feed.xml index.html staticwebapp.config.json site/
+
+      - name: Deploy production feed
+        if: steps.compare.outputs.deploy == 'true' || github.event_name == 'workflow_dispatch'
+        uses: Azure/static-web-apps-deploy@1a947af9992250f3bc2e68ad0754c0b0c11566c9 # v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AMR_RSS_SWA_DEPLOYMENT_TOKEN }}
+          action: upload
+          app_location: site
+          api_location: ''
+          output_location: ''
+          skip_app_build: true
+
+      - name: Verify published bytes
+        if: steps.compare.outputs.deploy == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --max-time 15 \
+                "https://green-sky-08b27ad10.4.azurestaticapps.net/feed.xml?verify=${GITHUB_RUN_ID}-${attempt}" \
+                -o "${RUNNER_TEMP}/published-feed.xml" \
+                && cmp -s feed.xml "${RUNNER_TEMP}/published-feed.xml"; then
+              echo 'Published feed matches the validated snapshot.'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'Published feed did not match the validated snapshot.' >&2
+          exit 1

@@ -108,6 +108,7 @@ class ArticleTests(unittest.TestCase):
             "https://assets.astonmartinf1.com@evil.example/public/cms/x/y/photo.jpg?w=1500&fit=fill",
             "https://assets.astonmartinf1.com/public/cms/../secret.jpg?w=1500&fit=fill",
             "https://assets.astonmartinf1.com/public/cms/x/y/photo.svg?w=1500&fit=fill",
+            "https://assets.astonmartinf1.com/public/cms/x/y/photo.avif?w=1500&fit=fill",
             "https://assets.astonmartinf1.com/public/cms/x/y/photo.jpg?w=999999&fit=fill",
             "https://assets.astonmartinf1.com/public/cms/x/y/photo.jpg?w=1500&fit=fill&url=https://evil.example",
             "https://assets.astonmartinf1.com/public/cms/x/y/photo.jpg?w=1500&fit=fill#fragment",

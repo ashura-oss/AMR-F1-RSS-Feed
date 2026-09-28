@@ -61,7 +61,7 @@ def official_image_url(url):
                 or parsed.fragment or not path.startswith("/public/cms/")
                 or "//" in path or "%" in path or "\\" in path
                 or any(part in (".", "..") for part in path.split("/"))
-                or not path.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".avif"))):
+                or not path.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))):
             raise FeedError("noncanonical official image URL")
         pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
         if len(pairs) != len({key for key, _ in pairs}) or any(key not in ("w", "fit") for key, _ in pairs):
